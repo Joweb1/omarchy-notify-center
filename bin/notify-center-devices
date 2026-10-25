@@ -1,0 +1,191 @@
+#!/bin/bash
+# Enumerate attachable peripherals and print a JSON array.
+#
+# USB entries contain:
+#   id      stable sysfs device id (e.g. 1-4.2)
+#   name    product string, or a generic fallback
+#   vendor  USB vendor id
+#   product USB product id
+#   detail  human-readable manufacturer + ids
+#   kind    mouse | keyboard | audio | drive | printer | phone | device | unknown
+#   action  files | printers | "" (empty means the icon is informational only)
+#
+# Display entries contain:
+#   id      stable DRM connector id (e.g. drm:card1-HDMI-A-1)
+#   name    connector name (e.g. HDMI-A-1)
+#   detail  first supported mode, or "Connected"
+#   kind    monitor
+#   action  display | ""
+#
+# Only devices on the outside of the machine are reported: soldered USB
+# devices, root hubs, internal hubs, and wireless adapters are skipped, as is
+# the internal eDP/LVDS/DSI panel. External phones, storage, printers, input
+# devices, audio devices, and HDMI/DisplayPort/DVI/VGA monitors are included.
+
+set -uo pipefail
+
+usb_sysfs="${NOTIFY_CENTER_USB_SYSFS:-/sys/bus/usb/devices}"
+drm_sysfs="${NOTIFY_CENTER_DRM_SYSFS:-/sys/class/drm}"
+
+json_escape() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}
+  s=${s//$'\r'/\\r}
+  s=${s//$'\t'/\\t}
+  printf '%s' "$s"
+}
+
+files_available() {
+  command -v omarchy-launch-nautilus >/dev/null 2>&1 ||
+    command -v nautilus >/dev/null 2>&1 ||
+    command -v xdg-open >/dev/null 2>&1
+}
+
+printers_available() {
+  command -v system-config-printer >/dev/null 2>&1 ||
+    command -v gnome-control-center >/dev/null 2>&1 ||
+    command -v systemsettings >/dev/null 2>&1 ||
+    command -v xdg-open >/dev/null 2>&1
+}
+
+displays_available() {
+  command -v omarchy-menu >/dev/null 2>&1 ||
+    command -v omarchy-launch-config-editor >/dev/null 2>&1
+}
+
+has_class() { [[ " $classes " == *" $1 "* ]]; }
+has_proto() { [[ " $protos " == *" $1 "* ]]; }
+
+out="["
+sep=""
+
+append_device() {
+  local id=$1 name=$2 vendor=$3 product=$4 detail=$5 kind=$6 action=$7
+  out+="$sep{\"id\":\"$(json_escape "$id")\",\"name\":\"$(json_escape "$name")\",\"vendor\":\"$(json_escape "$vendor")\",\"product\":\"$(json_escape "$product")\",\"detail\":\"$(json_escape "$detail")\",\"kind\":\"$kind\",\"action\":\"$action\"}"
+  sep=","
+}
+
+for dir in "$usb_sysfs"/*; do
+  [[ -d $dir ]] || continue
+  [[ -f $dir/idVendor && -f $dir/idProduct ]] || continue
+
+  id=${dir##*/}
+  [[ $id == usb* || $id == *:* ]] && continue
+
+  vendor=$(<"$dir/idVendor")
+  product=$(<"$dir/idProduct")
+  [[ $vendor == 1d6b ]] && continue
+
+  removable=""
+  [[ -f $dir/removable ]] && removable=$(<"$dir/removable")
+
+  classes=""
+  protos=""
+  for intf in "$dir":*; do
+    [[ -f $intf/bInterfaceClass ]] || continue
+    cls=$(<"$intf/bInterfaceClass")
+    classes+=" $cls"
+    if [[ $cls == 03 && -f $intf/bInterfaceProtocol ]]; then
+      protos+=" $(<"$intf/bInterfaceProtocol")"
+    fi
+  done
+
+  devcls=""
+  [[ -f $dir/bDeviceClass ]] && devcls=$(<"$dir/bDeviceClass")
+  if [[ -n $devcls && $devcls != 00 && $devcls != ef ]]; then
+    classes+=" $devcls"
+  fi
+
+  name=""
+  [[ -f $dir/product ]] && name=$(<"$dir/product")
+  [[ -n $name ]] || name="USB device"
+
+  manufacturer=""
+  [[ -f $dir/manufacturer ]] && manufacturer=$(<"$dir/manufacturer")
+
+  phone_like=0
+  has_class 06 && phone_like=1
+  lower_name=${name,,}
+  lower_manufacturer=${manufacturer,,}
+  phone_pattern='(redmi|xiaomi|android|iphone|ipad|galaxy|pixel|oneplus|oppo|vivo|huawei|honor|motorola|moto|sm-[a-z0-9])'
+  [[ $lower_name =~ $phone_pattern || $lower_manufacturer =~ $phone_pattern ]] && phone_like=1
+
+  if ((phone_like)); then
+    kind="phone"
+  elif has_class 07; then
+    kind="printer"
+  elif has_class 08; then
+    kind="drive"
+  elif has_class 03 && has_proto 01; then
+    kind="keyboard"
+  elif has_class 03 && has_proto 02; then
+    kind="mouse"
+  elif has_class 0e; then
+    kind="device"
+  elif has_class 01; then
+    kind="audio"
+  elif has_class e0; then
+    kind="device"
+  elif has_class 09; then
+    kind="device"
+  elif has_class 03; then
+    kind="device"
+  else
+    kind="unknown"
+  fi
+
+  # Soldered devices (internal camera, internal hub, fingerprint reader, ...)
+  # are not something a user can plug or unplug.
+  [[ $removable == fixed ]] && continue
+
+  # Hubs and wireless adapters are infrastructure, not peripherals.
+  has_class 09 && continue
+  has_class e0 && continue
+
+  # If the kernel cannot tell whether the device is removable, only keep
+  # device classes that unambiguously belong to a peripheral. This hides
+  # built-in USB endpoints whose removable flag is "unknown".
+  if [[ -z $removable || $removable == unknown ]]; then
+    case "$kind" in
+      mouse | keyboard | audio | drive | printer | phone) ;;
+      *) continue ;;
+    esac
+  fi
+
+  detail="$vendor:$product"
+  [[ -n $manufacturer ]] && detail="$manufacturer · $detail"
+
+  action=""
+  case "$kind" in
+    phone | drive | device) files_available && action="files" ;;
+    printer) printers_available && action="printers" ;;
+  esac
+
+  append_device "$id" "$name" "$vendor" "$product" "$detail" "$kind" "$action"
+done
+
+for status_path in "$drm_sysfs"/card*-*/status; do
+  [[ -e $status_path ]] || continue
+  [[ $(<"$status_path") == connected ]] || continue
+
+  conn_dir=${status_path%/status}
+  conn_id=${conn_dir##*/}
+  connector=${conn_id#card*-}
+  case "$connector" in
+    eDP* | LVDS* | DSI* | Virtual* | Writeback* | Unknown*) continue ;;
+  esac
+
+  mode=""
+  [[ -s $conn_dir/modes ]] && mode=$(head -n1 "$conn_dir/modes")
+  detail=${mode:-Connected}
+
+  action=""
+  displays_available && action="display"
+
+  append_device "drm:$conn_id" "$connector" "" "" "$detail" "monitor" "$action"
+done
+
+out+="]"
+printf '%s\n' "$out"

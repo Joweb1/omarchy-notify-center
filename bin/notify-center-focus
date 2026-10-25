@@ -1,0 +1,99 @@
+#!/bin/bash
+# Focus the window that produced a notification, or launch its application.
+# Called by Service.qml with: <app> <desktopEntry> <url>
+
+set -uo pipefail
+
+app="${1:-}"
+desktop="${2:-}"
+url="${3:-}"
+
+desktop_path=""
+exec_line=""
+wm_class=""
+display_name=""
+
+if [[ -n $desktop ]]; then
+  for dir in "$HOME/.local/share/applications" /usr/share/applications /usr/local/share/applications; do
+    for name in "$desktop" "${desktop%.desktop}.desktop"; do
+      if [[ -f "$dir/$name" ]]; then
+        desktop_path="$dir/$name"
+        break 2
+      fi
+    done
+  done
+fi
+
+if [[ -n $desktop_path ]]; then
+  exec_line=$(sed -n 's/^Exec=//p' "$desktop_path" | head -n 1)
+  wm_class=$(sed -n 's/^StartupWMClass=//p' "$desktop_path" | head -n 1)
+  display_name=$(sed -n 's/^Name=//p' "$desktop_path" | head -n 1)
+fi
+
+desktop_id=""
+if [[ -n $desktop_path ]]; then
+  desktop_id=$(basename "$desktop_path" .desktop)
+elif [[ -n $desktop ]]; then
+  desktop_id=${desktop%.desktop}
+fi
+
+normalize() {
+  tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]'
+}
+
+app_key=$(printf '%s' "$app" | normalize)
+desktop_key=$(printf '%s' "$desktop_id" | normalize)
+wm_key=$(printf '%s' "$wm_class" | normalize)
+name_key=$(printf '%s' "$display_name" | normalize)
+
+if command -v hyprctl >/dev/null 2>&1; then
+  clients=$(hyprctl clients -j 2>/dev/null || true)
+
+  if [[ -n $clients ]]; then
+    while IFS=$'\t' read -r address class initial title; do
+      [[ -n $address ]] || continue
+      class_key=$(printf '%s' "$class" | normalize)
+      initial_key=$(printf '%s' "$initial" | normalize)
+
+      match=0
+      for candidate in "$app_key" "$desktop_key" "$wm_key" "$name_key"; do
+        [[ -n $candidate ]] || continue
+        if [[ $class_key == "$candidate" || $initial_key == "$candidate" ]]; then
+          match=1
+          break
+        fi
+        if (( ${#candidate} >= 4 )) && [[ $class_key == *"$candidate"* || $initial_key == *"$candidate"* ]]; then
+          match=1
+          break
+        fi
+      done
+
+      if (( match )); then
+        hyprctl dispatch focuswindow "address:$address" >/dev/null 2>&1 && exit 0
+      fi
+    done < <(jq -r '.[] | [.address, (.class // ""), (.initialClass // ""), (.title // "")] | @tsv' <<<"$clients" 2>/dev/null || true)
+  fi
+fi
+
+if [[ -n $desktop_path ]]; then
+  gtk-launch "$(basename "$desktop_path")" >/dev/null 2>&1 && exit 0
+fi
+
+if [[ -n $url ]]; then
+  xdg-open "$url" >/dev/null 2>&1 && exit 0
+fi
+
+if [[ -n $exec_line ]]; then
+  exec_line=${exec_line//%[fFuUdDnNickvm]/}
+  if command -v hyprctl >/dev/null 2>&1; then
+    hyprctl dispatch exec -- "$exec_line" >/dev/null 2>&1 && exit 0
+  fi
+  setsid bash -c "$exec_line" >/dev/null 2>&1 &
+  exit 0
+fi
+
+if [[ -n $desktop_id ]]; then
+  gtk-launch "$desktop_id" >/dev/null 2>&1 && exit 0
+fi
+
+exit 1

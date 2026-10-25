@@ -1,0 +1,106 @@
+#!/bin/bash
+# omarchy:summary=Control the Notification Center plugin
+# omarchy:group=shell
+# omarchy:args=<command> [args]
+# omarchy:examples=notify-center toggle | notify-center status | notify-center dnd on
+
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: notify-center <command> [args]
+
+Commands:
+  open                 Open the notification center
+  close                Close the notification center
+  toggle               Toggle the notification center
+  settings             Open notification settings
+  status               Print service state as JSON
+  history              Print notification history as JSON
+  dnd [on|off|toggle]  Get or set Do Not Disturb
+  clear                Clear notification history
+  read-all             Mark every notification as read
+  mute <app>           Mute notifications from an app
+  unmute <app>         Unmute an app
+  remove <key>         Remove one history entry
+  invoke <key>         Invoke a history entry's default action
+  position <where>     Set popup position: left, center, or right
+  reload               Reload config.toml from disk
+
+Examples:
+  notify-center toggle
+  notify-center dnd on
+  notify-center mute "Google Chrome"
+  notify-center position right
+USAGE
+}
+
+need_value() {
+  if [[ $# -eq 0 || -z ${1:-} ]]; then
+    usage >&2
+    exit 2
+  fi
+}
+
+if ! command -v omarchy-shell >/dev/null 2>&1; then
+  echo "notify-center: omarchy-shell is not in PATH" >&2
+  exit 1
+fi
+
+command="${1:-status}"
+shift || true
+
+case "$command" in
+  -h|--help|help)
+    usage
+    ;;
+  open|close|toggle|settings|status|reload|clear)
+    omarchy-shell notify-center "$command"
+    ;;
+  history)
+    if command -v jq >/dev/null 2>&1; then
+      omarchy-shell notify-center historyJson | jq .
+    else
+      omarchy-shell notify-center historyJson
+    fi
+    ;;
+  read-all|readall)
+    omarchy-shell notify-center readAll
+    ;;
+  dnd)
+    value="${1:-toggle}"
+    case "$value" in
+      on|true|1|yes) value=true ;;
+      off|false|0|no) value=false ;;
+      toggle|"") value=toggle ;;
+      *)
+        echo "notify-center: dnd expects on, off, or toggle" >&2
+        exit 2
+        ;;
+    esac
+    omarchy-shell notify-center dnd "$value"
+    ;;
+  position)
+    need_value "$@"
+    case "$1" in
+      left|center|right) omarchy-shell notify-center position "$1" ;;
+      *)
+        echo "notify-center: position expects left, center, or right" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  mute|unmute)
+    need_value "$@"
+    omarchy-shell notify-center "$command" "$*"
+    ;;
+  remove|invoke)
+    need_value "$@"
+    omarchy-shell notify-center "$command" "$1"
+    ;;
+  *)
+    echo "notify-center: unknown command '$command'" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

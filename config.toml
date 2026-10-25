@@ -1,0 +1,26 @@
+# notify-center configuration.
+# Changes reload live; no shell restart needed.
+
+[general]
+# Popup anchor: "left", "center", or "right".
+position = "right"
+# Seconds a normal popup stays on screen.
+timeout = 5
+# Seconds a critical popup stays on screen.
+critical_timeout = 5
+# Keep critical popups on screen until dismissed.
+sticky_critical = false
+# Cards shown at once (1 = one pill, 3 = stacked deck).
+max_visible = 3
+# Cards kept in the queue before the oldest is dropped.
+max_stack = 50
+# Fade/slide animation.
+animation = true
+# Popup width in pixels.
+width = 380
+# Do Not Disturb.
+dnd = false
+
+[mute]
+# Apps whose notifications are suppressed.
+apps = []
