@@ -8,6 +8,13 @@ persistent history.
 > Omarchy 4 uses Quickshell for notifications. This plugin is QML, not Mako or
 > Waybar. It requires `omarchy-shell` and writes only to your user config/state.
 
+## Preview
+
+<p align="center">
+  <img src="preview.png" alt="Notification Center with expanded notification cards" width="340">
+  <img src="docs/notification-center-stacked.png" alt="Notification Center with stacked notifications" width="340">
+</p>
+
 ## Features
 
 - Floating notification pills anchored left, center, or right.
