@@ -5,8 +5,11 @@
   "version": "1.1.0",
   "author": "jovibe",
   "license": "MIT",
-  "description": "Android/iOS-style notification pills, a stacked notification center, history, DND, per-app mute, and actions for the Omarchy shell.",
-  "kinds": ["service", "bar-widget"],
+  "description": "Android/iOS-style notification pills, a stacked notification center with history, DND, per-app mute, actions, and USB/phone/monitor detection for the Omarchy shell.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
   "keepLoaded": true,
   "entryPoints": {
     "service": "Service.qml",
@@ -14,7 +17,7 @@
   },
   "barWidget": {
     "displayName": "Notification Center",
-    "description": "Unread badge and an iPhone-style stacked notification center.",
+    "description": "Unread badge, stacked notification center, device strip, and live settings.",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right",
