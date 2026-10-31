@@ -845,8 +845,11 @@ Item {
     persistHistory()
   }
 
+  // Set once the state directory is confirmed private (0700).
+  property bool stateSecured: false
+
   function persistHistory() {
-    if (!historyLoaded) return
+    if (!historyLoaded || !stateSecured) return
     historyFile.setText(JSON.stringify({ version: 1, entries: history }) + "\n")
   }
 
@@ -954,15 +957,27 @@ Item {
     ensureDirs.running = true
     Qt.callLater(function() {
       configFile.reload()
-      historyFile.reload()
       service.refreshDevices()
     })
   }
 
   Process {
     id: ensureDirs
-    command: ["mkdir", "-p", service.configDir, service.stateDir]
+    // History holds private notification content: keep the state directory
+    // and file owner-only, and tighten anything left over from older installs.
+    command: ["sh", "-c",
+      "umask 077; mkdir -p \"$1\" \"$2\" && chmod 700 \"$2\" && " +
+      "{ [ ! -e \"$3\" ] || chmod 600 \"$3\"; }",
+      "notify-center", service.configDir, service.stateDir, service.historyPath]
     running: false
+    onExited: function(exitCode) {
+      if (exitCode !== 0) {
+        console.warn("notify-center: could not secure state directory; history disabled")
+        return
+      }
+      service.stateSecured = true
+      historyFile.reload()
+    }
   }
 
   Process {
@@ -1036,6 +1051,13 @@ Item {
     printErrors: false
     onLoaded: service.loadHistory(text())
     onLoadFailed: service.loadHistory("")
+    onSaved: secureHistory.running = true
+  }
+
+  Process {
+    id: secureHistory
+    command: ["chmod", "600", service.historyPath]
+    running: false
   }
 
   NotificationServer {
